@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KUE-CHIP2 Emulator</title>
+<link href="css/bootstrap.min.css" rel="stylesheet">
+<!--[if lt IE 9]>
+<script src="https://oss.maxcdn.com/html5shiv/3.7.3/html5shiv.min.js"></script>
+<script src="https://oss.maxcdn.com/respond/1.4.2/respond.min.js"></script>
+<![endif]-->
+</head>
+<style>
+body {
+	font-family: Consolas, 'Courier New', Courier, Monaco, monospace;
+	font-size: 14px;
+	line-height: 1.2;
+}
+td input {
+	width: 100%;
+	height: 100%;
+	box-sizing: border-box;
+	border: 0;
+}
+#codememtab, #codememtable {
+	background-color: #bbffbb;
+}
+#datamemtab, #datamemtable {
+	background-color: #ffffbb;
+}
+#uploadArea {
+	height: 64px;
+	padding-top: 16px;
+	border: 2px dashed #c6c6c6;
+	font-size: 20px;
+}
+</style>
+<script>
+var LSKEY_CodeMemory = "KUE-CHIP2_CodeMemory";
+var LSKEY_DataMemory = "KUE-CHIP2_DataMemory"
+var regs = {"ACC": 0, "IX": 0, "FLAG": 0, "IR": 0, "PC": 0, "MAR": 0, "NextPhase": 0};
+var subops = ["SBC", "ADC", "SUB", "ADD", "EOR", "OR", "AND", "CMP"];
+var addrTypes = ["ACC", "IX", "d", "[d]", "(d)", "[IX + d]", "(IX + d)"];
+var flagTypes = {"ZF": 0x01, "NF": 0x02, "VF": 0x04, "CF": 0x08};
+// [addr] means addr in Code Memory.
+// (addr) means addr in Data Memory.
+//
+var regSels = {};
+var codeMemory = [];
+var codeMemSels = [];
+var dataMemory = [];
+var dataMemSels = [];
+
+var MARTarget = codeMemory;
+
+onload = function(){
+	var dropZone = document.getElementById('uploadArea');
+	dropZone.addEventListener('dragover', handleDragOver, false);
+	dropZone.addEventListener('drop', handleFileSelect, false);
+	initCPU();
+	initView();
+	updateView();
+}
+
+function initView(){
+	//
+	// regtable
+	//
+	var t = $('<table>').addClass("table").addClass("table-bordered");
+	t.append($('<thead>').append(
+		$('<tr>')
+		.append($('<th>').text("RegName").css("width", "20%"))
+		.append($('<th>').text("Data"))
+	));
+	var tb = $('<tbody>');
+	for(k in regs){
+		regSels[k] = $('<td>');
+		tb.append(
+			$('<tr>')
+			.append($('<th>').text(k))
+			.append(regSels[k].text("-"))
+		)
+	}
+	t.append(tb);
+	$("#regtable").append(t);
+
+	initMemTable(dataMemSels, "#datamemtable", dataMemChanged)
+	initMemTable(codeMemSels, "#codememtable", codeMemChanged)
+}
+
+function initMemTable(selList, tabelId, callback)
+{
+	var t = $('<table>').addClass("table").addClass("table-bordered");
+	var tr = $('<tr>').append($('<th>').text("Addr/Ofs"));
+	for(var i = 0; i < 16; i++){
+		tr.append($('<th>').text(("0"+i.toString(16)).slice(-2).toUpperCase()));
+	}
+	t.append($('<thead>').append(tr));
+	var tb = $('<tbody>');
+	for(var i = 0; i < 16; i++){
+		var tr = $('<tr>').append($('<th>').text((i.toString(16) + "0").toUpperCase()));
+		for(var k = 0; k < 16; k++){
+			var d = $('<input>')
+				.attr("type", "text")
+				.attr("name", ""+((i << 4) + k))
+				.addClass("text-center")
+				.change(function(sel){callback(sel);});
+			selList[(i << 4) + k] = d;
+			tr.append($("<td>").css("padding", "0").append(d));
+		}
+		tb.append(tr);
+	}
+	t.append(tb);
+	$(tabelId).append(t);
+
+}
+
+function codeMemChanged(sel){
+	memChanged(sel, codeMemory);
+}
+
+function dataMemChanged(sel){
+	memChanged(sel, dataMemory);
+}
+
+function memChanged(sel, targetMemData){
+	var idx = parseInt(sel.target.name, 10);
+	var data = parseInt(sel.target.value, 16);
+	if(isNaN(data) || data < 0 || 0xff < data){
+		console.log("Invalid data: " + data);
+		data = targetMemData[idx];
+	} else{
+		targetMemData[idx] = data;
+	}
+	$(sel.target).val(("0"+data.toString(16)).slice(-2).toUpperCase());
+	saveMemoryToLocalStorage();
+}
+
+function resetCPU()
+{
+	for(var k in regs){
+		regs[k] = 0;
+	}
+	updateView();
+}
+
+function initCPU()
+{
+	for(var k in regs){
+		regs[k] = 0;
+	}
+	codeMemory = localStorage[LSKEY_CodeMemory];
+	if(codeMemory !== undefined){
+		codeMemory = JSON.parse(codeMemory);
+	} else{
+		codeMemory = [];
+	}
+	//
+	dataMemory = localStorage[LSKEY_DataMemory];
+	if(dataMemory !== undefined){
+		dataMemory = JSON.parse(dataMemory);
+	} else{
+		dataMemory = [];
+	}
+	//
+	for(var i = 0; i < 0x100; i++){
+		codeMemory[i] = (codeMemory[i] === undefined) ? 0 : codeMemory[i];
+		dataMemory[i] = (dataMemory[i] === undefined) ? 0 : dataMemory[i];
+	}
+}
+
+function saveMemoryToLocalStorage()
+{
+	localStorage[LSKEY_CodeMemory] = JSON.stringify(codeMemory);
+	localStorage[LSKEY_DataMemory] = JSON.stringify(dataMemory);
+}
+
+function updateView()
+{
+	for(var k in regs){
+		regSels[k].text(("0"+regs[k].toString(16)).slice(-2).toUpperCase());
+	}
+	for(var i = 0; i < 0x100; i++){
+		codeMemSels[i].val(("0"+codeMemory[i].toString(16)).slice(-2).toUpperCase());
+		dataMemSels[i].val(("0"+dataMemory[i].toString(16)).slice(-2).toUpperCase());
+	}
+}
+/*
+function fetchAddrToMAR(B)
+{
+	var d = codeMemory[regs["MAR"]];
+	var cdm = (B & 1) ? dataMemory: codeMemory;
+	if(B < 2){
+		// ACC, IX
+		return regs[addrTypes[B]];
+	} else if(B < 4){
+		// d
+		return d;
+	}
+	if(B >= 6){
+		d += regs["IX"];
+	}
+	return cdm[d & 0xff];
+}
+
+function getValPointedByMAR()
+{
+	return 
+}
+*/
+
+function loadPCToMAR()
+{
+	// (PC) -> MAR
+	regs["MAR"] = regs["PC"];
+	regs["PC"]++;
+	MARTarget = codeMemory;
+}
+
+function isBReg(B)
+{
+	return (B < 2);
+}
+
+function isBImm(B)
+{
+	return (2 <= B && B < 4);
+}
+
+function loadBAddrToMAR(B)
+{
+	var d = fetchAtMAR();
+	if(B >= 6){
+		d += regs["IX"];
+	}
+	regs["MAR"] = d;
+	MARTarget = (B & 1) ? dataMemory : codeMemory;
+}
+
+function fetchAtMAR()
+{
+	return MARTarget[regs["MAR"]];
+}
+
+function storeToMAR(v)
+{
+	MARTarget[regs["MAR"]] = v;
+}
+
+var dispatchTable = {
+	"HLT": [
+		function(){
+			regs["NextPhase"] = 0;
+			console.log("HLT");
+		}
+	],
+	"NOP": [
+		function(){
+			regs["NextPhase"] = 0;
+			console.log("NOP");
+		}
+	],
+	"OUT": [
+		function(){
+			regs["NextPhase"] = 0;
+			console.log("OUT");
+		}
+	],
+	"IN": [
+		function(){
+			regs["NextPhase"] = 0;
+			console.log("IN");
+		}
+	],
+	"RCF": [
+		function(){
+			regs["FLAG"] &= ~flagTypes["CF"];
+			regs["NextPhase"] = 0;
+			console.log("RCF");
+		}
+	],
+	"SCF": [
+		function(){
+			regs["FLAG"] |= flagTypes["CF"];
+			regs["NextPhase"] = 0;
+			console.log("SCF");
+		}
+	],
+	"Bcc": [
+		function(){
+			regs["NextPhase"] = 0;
+			console.log("Bcc");
+		}
+	],
+	"Ssm": [
+		function(){
+			regs["NextPhase"] = 0;
+			console.log("Ssm");
+		}
+	],
+	"Rsm": [
+		function(){
+			regs["NextPhase"] = 0;
+			console.log("Rsm");
+		}
+	],
+	"LD": [
+		function(op){	// P2
+			if(isBReg(op.B)){
+				regs[addrTypes[op.A]] = regs[addrTypes[op.B]]
+				regs["NextPhase"] = 0;
+				console.log("LD " + addrTypes[op.A] + ", " + addrTypes[op.B]);
+			} else{
+				loadPCToMAR();
+				regs["NextPhase"]++;
+			}
+		},
+		function(op){	// P3
+			if(isBImm(op.B)){
+				regs[addrTypes[op.A]] = fetchAtMAR();
+				regs["NextPhase"] = 0;
+				console.log("LD " + addrTypes[op.A] + ", 0x" + regs[addrTypes[op.A]].toString(16).toUpperCase());
+			} else{
+				loadBAddrToMAR(op.B);
+				regs["NextPhase"]++;
+			}
+		},
+		function(op){	// P4
+			regs[addrTypes[op.A]] = fetchAtMAR();
+			regs["NextPhase"] = 0;
+			//
+			if(MARTarget == codeMemory){
+				console.log("LD " + addrTypes[op.A] + ", codeMem[0x" + regs["MAR"].toString(16).toUpperCase() + "]");
+			} else{
+				console.log("LD " + addrTypes[op.A] + ", dataMem(0x" + regs["MAR"].toString(16).toUpperCase() + ")");
+			}
+		},
+	],
+	"ST": [
+		function(op){	// P2
+			if(isBReg(op.B) || isBImm(op.B)){
+				throw ("Invalid op" + op);
+			} else{
+				loadPCToMAR();
+				regs["NextPhase"]++;
+			}
+		},
+		function(op){	// P3
+			loadBAddrToMAR(op.B);
+			regs["NextPhase"]++;
+		},
+		function(op){	// P4
+			storeToMAR(regs[addrTypes[op.A]]);
+			regs["NextPhase"] = 0;
+			//
+			if(MARTarget == codeMemory){
+				console.log("LD " + addrTypes[op.A] + ", codeMem[0x" + regs["MAR"].toString(16).toUpperCase() + "]");
+			} else{
+				console.log("LD " + addrTypes[op.A] + ", dataMem(0x" + regs["MAR"].toString(16).toUpperCase() + ")");
+			}
+		},
+	],
+	"Aop": [
+		function(op){
+			// Arithmetic Operations
+			regs["NextPhase"] = 0;
+			console.log(subops[op.subop] + " " + addrTypes[op.A] + ", " + addrTypes[op.B]);
+		}
+	],
+}
+
+function getInstrGroupName(instr)
+{
+	if((instr & 0xf8) == 0){
+		return "NOP";
+	} else if((instr & 0xf8) == 8){
+		return "HLT";
+	} else if((instr & 0xf0) == 0x50){
+		return "HLT";
+	} else if((instr & 0xf8) == 0x10){
+		return "OUT";
+	} else if((instr & 0xf8) == 0x18){
+		return "IN";
+	} else if((instr & 0xf8) == 0x20){
+		return "RCF";
+	} else if((instr & 0xf8) == 0x28){
+		return "SCF";
+	} else if((instr & 0xf0) == 0x30){
+		return "Bcc";
+	} else if((instr & 0xf4) == 0x40){
+		return "Ssm";
+	} else if((instr & 0xf4) == 0x44){
+		return "Rsm";
+	} else if((instr & 0xf0) == 0x60){
+		return "LD";
+	} else if((instr & 0xf0) == 0x70){
+		return "ST";
+	}
+	return "Aop";
+}
+
+function nextPhase()
+{
+	var instr = regs["IR"];
+	var ig = getInstrGroupName(instr);
+	if(regs["NextPhase"] == 0){
+		loadPCToMAR();
+		regs["NextPhase"]++;
+	} else if(regs["NextPhase"] == 1){
+		regs["IR"] = fetchAtMAR();
+		regs["NextPhase"]++;
+	} else{
+		if(dispatchTable[ig] && dispatchTable[ig][regs["NextPhase"] - 2]){
+			dispatchTable[ig][regs["NextPhase"] - 2]({
+				"code": instr,
+				"A": (instr & 0x08) >> 3,
+				"B": (instr & 0x07),
+				"subOp": (instr & 0x70) >> 4,
+				"sm": (instr & 0x03),
+				"cc": (instr & 0x0F),
+			});
+		} else{
+			console.log("Not implemented." + instr);
+		}
+	}
+	updateView();
+}
+// http://www.html5rocks.com/ja/tutorials/file/dndfiles/
+function handleFileSelect(evt){
+	evt.stopPropagation();
+	evt.preventDefault();
+
+	var files = evt.dataTransfer.files; // FileList object.
+
+	// files is a FileList of File objects. List some properties.
+	var output = [];
+	for(var i = 0, f; f = files[i]; i++){
+		var r = new FileReader();
+		r.onload = (function(file){
+			return function(e){
+				console.log(r.result);
+				var s = r.result.replace(/#.*?\n/g, "").replace(/( |\n)/g, "");
+				console.log(s);
+				for(i = 0; i < s.length; i += 2){
+					codeMemory[i / 2] = parseInt(s.substr(i, 2), 16);
+				}
+				updateView();
+			}
+		})(f);
+		r.readAsText(f);
+		break;
+	}
+}
+
+function handleDragOver(evt){
+	evt.stopPropagation();
+	evt.preventDefault();
+	evt.dataTransfer.dropEffect = 'copy'; // Explicitly show this is a copy    .
+}
+</script>
+<body>
+<div class="container">
+	<h2>KUE-CHIP2 Emulator</h2>
+	<div class="btn-group" role="group" aria-label="controls">
+		<button type="button" class="btn btn-default" onclick="nextPhase()">Single Phase</button>
+		<button type="button" class="btn btn-default">Single Instruction</button>
+		<button type="button" class="btn btn-default">Start/Stop</button>
+		<button type="button" class="btn btn-default" onclick="resetCPU()">Reset</button>
+	</div>
+	<div class="row">
+		<div class="col-xs-12 col-sm-4 col-md-4 col-lg-4">
+			<h3>Registers</h3>
+			<div id="regtable"></div>
+			<div id="uploadArea" class="text-center">Upload Hex text</div>
+		</div>
+		<div class="col-xs-12 col-sm-8 col-md-8 col-lg-8">
+			<h3>Memory</h3>
+			<p>Click a cell to edit memory.</p>
+			<ul class="nav nav-tabs" role="tablist">
+				<li role="presentation" class="active">
+					<a id="codememtab" href="#codememtable"
+						aria-controls="codememtable" role="tab" data-toggle="tab">Code</a>
+				</li>
+				<li role="presentation">
+					<a id="datamemtab" href="#datamemtable"
+						aria-controls="datamemtable" role="tab" data-toggle="tab">Data</a>
+				</li>
+			</ul>
+			<div class="tab-content">
+				<div role="tabpanel" class="tab-pane active" id="codememtable">
+				</div>
+				<div role="tabpanel" class="tab-pane" id="datamemtable">
+				</div>
+			</div>
+		</div>
+	</div>
+</div>
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/1.12.4/jquery.min.js"></script>
+<script src="js/bootstrap.min.js"></script>
+</body>
+</html>
