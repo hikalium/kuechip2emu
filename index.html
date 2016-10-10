@@ -41,6 +41,7 @@ var LSKEY_CodeMemory = "KUE-CHIP2_CodeMemory";
 var LSKEY_DataMemory = "KUE-CHIP2_DataMemory"
 var regs = {"ACC": 0, "IX": 0, "FLAG": 0, "IR": 0, "PC": 0, "MAR": 0, "NextPhase": 0};
 var subops = ["SBC", "ADC", "SUB", "ADD", "EOR", "OR", "AND", "CMP"];
+var branchConds = ["A", "NZ", "ZP", "P", "NI", "NC", "GE", "GT", "VF", "Z", "N", "ZN", "NO", "C", "LT", "LE"];
 var addrTypes = ["ACC", "IX", "d", "[d]", "(d)", "[IX + d]", "(IX + d)"];
 var flagTypes = {"ZF": 0x01, "NF": 0x02, "VF": 0x04, "CF": 0x08};
 // [addr] means addr in Code Memory.
@@ -51,6 +52,7 @@ var codeMemory = [];
 var codeMemSels = [];
 var dataMemory = [];
 var dataMemSels = [];
+var hltFlag = false;
 
 var MARTarget = codeMemory;
 
@@ -142,6 +144,7 @@ function resetCPU()
 	for(var k in regs){
 		regs[k] = 0;
 	}
+	hltFlag = false;
 	updateView();
 }
 
@@ -186,29 +189,6 @@ function updateView()
 		dataMemSels[i].val(("0"+dataMemory[i].toString(16)).slice(-2).toUpperCase());
 	}
 }
-/*
-function fetchAddrToMAR(B)
-{
-	var d = codeMemory[regs["MAR"]];
-	var cdm = (B & 1) ? dataMemory: codeMemory;
-	if(B < 2){
-		// ACC, IX
-		return regs[addrTypes[B]];
-	} else if(B < 4){
-		// d
-		return d;
-	}
-	if(B >= 6){
-		d += regs["IX"];
-	}
-	return cdm[d & 0xff];
-}
-
-function getValPointedByMAR()
-{
-	return 
-}
-*/
 
 function loadPCToMAR()
 {
@@ -289,20 +269,85 @@ var dispatchTable = {
 	],
 	"Bcc": [
 		function(){
+			loadPCToMAR();
+			regs["NextPhase"]++;
+		},
+		function(op){
 			regs["NextPhase"] = 0;
-			console.log("Bcc");
-		}
+			var branchTarget = fetchAtMAR();
+			//console.log("B" + branchConds[op.cc] + " " + branchTarget.toString(16).toUpperCase())
+			//
+			var zf = (regs["FLAG"] & flagTypes["ZF"]) != 0;
+			var nf = (regs["FLAG"] & flagTypes["NF"]) != 0;
+			var vf = (regs["FLAG"] & flagTypes["VF"]) != 0;
+			var cf = (regs["FLAG"] & flagTypes["CF"]) != 0;
+			switch(op.cc){
+				case 0x00: // Absolute
+					break;
+				case 0x01: // Not Zero
+					if(!zf) break;
+					return;
+				case 0x02: // Zero or Positive
+					if(!n) break;
+					return;
+				case 0x03: // Positive
+					if((nf | zf) == 0) break;
+					return;
+				case 0x04: // No Input
+					// if(!zf) break;
+					console.log("NOT IMPLEMENTED!!!!");
+					return;
+				case 0x05: // No Carry
+					if(!cf) break;
+					return;
+				case 0x06: // Greater than or Equal
+					if((vf ^ nf) == 0) break;
+					return;
+				case 0x07: // Greater than
+					if(((vf ^ nf) | zf) == 0) break;
+					return;
+				case 0x08: // oVErflow
+					if(vf) break;
+					return;
+				case 0x09: // Zero
+					if(zf) break;
+					return;
+				case 0x0a: // Negative
+					if(n) break;
+					return;
+				case 0x0b: // Zero or Negative
+					if((nf | zf) == 1) break;
+					return;
+				case 0x0c: // Not Outputted
+					// if(!zf) break;
+					console.log("NOT IMPLEMENTED!!!!");
+					return;
+				case 0x0d: // Carry
+					if(cf) break;
+					return;
+				case 0x0e: // Less Than
+					if((vf ^ nf) == 1) break;
+					return;
+				case 0x0f: // Less Than or Equal 
+					if(((vf ^ nf) | zf) == 1) break;
+					return;
+			}
+			regs["PC"] = branchTarget;
+			//console.log("branch taken.");
+		},
 	],
 	"Ssm": [
 		function(){
 			regs["NextPhase"] = 0;
 			console.log("Ssm");
+			console.log("NOT IMPLEMENTED!!!!");
 		}
 	],
 	"Rsm": [
 		function(){
 			regs["NextPhase"] = 0;
 			console.log("Rsm");
+			console.log("NOT IMPLEMENTED!!!!");
 		}
 	],
 	"LD": [
@@ -310,7 +355,7 @@ var dispatchTable = {
 			if(isBReg(op.B)){
 				regs[addrTypes[op.A]] = regs[addrTypes[op.B]]
 				regs["NextPhase"] = 0;
-				console.log("LD " + addrTypes[op.A] + ", " + addrTypes[op.B]);
+				//console.log("LD " + addrTypes[op.A] + ", " + addrTypes[op.B]);
 			} else{
 				loadPCToMAR();
 				regs["NextPhase"]++;
@@ -320,7 +365,7 @@ var dispatchTable = {
 			if(isBImm(op.B)){
 				regs[addrTypes[op.A]] = fetchAtMAR();
 				regs["NextPhase"] = 0;
-				console.log("LD " + addrTypes[op.A] + ", 0x" + regs[addrTypes[op.A]].toString(16).toUpperCase());
+				//console.log("LD " + addrTypes[op.A] + ", 0x" + regs[addrTypes[op.A]].toString(16).toUpperCase());
 			} else{
 				loadBAddrToMAR(op.B);
 				regs["NextPhase"]++;
@@ -330,11 +375,13 @@ var dispatchTable = {
 			regs[addrTypes[op.A]] = fetchAtMAR();
 			regs["NextPhase"] = 0;
 			//
+/*
 			if(MARTarget == codeMemory){
 				console.log("LD " + addrTypes[op.A] + ", codeMem[0x" + regs["MAR"].toString(16).toUpperCase() + "]");
 			} else{
 				console.log("LD " + addrTypes[op.A] + ", dataMem(0x" + regs["MAR"].toString(16).toUpperCase() + ")");
 			}
+*/
 		},
 	],
 	"ST": [
@@ -354,20 +401,165 @@ var dispatchTable = {
 			storeToMAR(regs[addrTypes[op.A]]);
 			regs["NextPhase"] = 0;
 			//
+/*
 			if(MARTarget == codeMemory){
-				console.log("LD " + addrTypes[op.A] + ", codeMem[0x" + regs["MAR"].toString(16).toUpperCase() + "]");
+				console.log("ST codeMem[0x" + regs["MAR"].toString(16).toUpperCase() + "], " + addrTypes[op.A]);
 			} else{
-				console.log("LD " + addrTypes[op.A] + ", dataMem(0x" + regs["MAR"].toString(16).toUpperCase() + ")");
+				console.log("ST dataMem(0x" + regs["MAR"].toString(16).toUpperCase() + "), " + addrTypes[op.A]);
 			}
+*/
 		},
 	],
 	"Aop": [
-		function(op){
+		function(op){	// P2
 			// Arithmetic Operations
+			if(isBReg(op.B)){
+				performArithmeticOp(op);
+				regs["NextPhase"] = 0;
+			} else{
+				loadPCToMAR();
+				regs["NextPhase"]++;
+			}
+		},
+		function(op){	// P3
+			if(isBImm(op.B)){
+				performArithmeticOp(op);
+				regs["NextPhase"] = 0;
+			} else{
+				loadBAddrToMAR(op.B);
+				regs["NextPhase"]++;
+			}
+		},
+		function(op){	// P4
+			performArithmeticOp(op);
 			regs["NextPhase"] = 0;
-			console.log(subops[op.subop] + " " + addrTypes[op.A] + ", " + addrTypes[op.B]);
-		}
+		},
 	],
+}
+
+function setFlag(fName, v)
+{
+	if(v != 0 && v != 1) return;
+	regs["FLAG"] = (regs["FLAG"] & ~flagTypes[fName]) | (flagTypes[fName] * v);
+}
+
+function getAdjustedResult(v)
+{
+	if(v < 0){
+		v = -v;
+		v = ~v;
+		v++;
+	}
+	v &= 0xff;
+	return v;
+}
+
+function updateFLAG(vA, vB, vR, C, V, N, Z)
+{
+	// Flg: undefined -> update, -1 -> do not change, 1 or 0 -> set this value.
+	// vR should be adjusted.
+	if(C === undefined){
+		C = (vR & 0xff) ? 1 : 0;
+	}
+	setFlag("CF", C);
+	//
+	if(V === undefined){
+		V = ((vA & 0x80) == (vB & 0x80) && (vA & 0x80) != (vR & 0x80)) ? 1 : 0;
+	}
+	setFlag("VF", V);
+	//
+	if(N === undefined){
+		N = (vR & 0x80) ? 1 : 0;
+	}
+	setFlag("NF", N);
+	//
+	if(Z === undefined){
+		Z = (vR == 0) ? 1 : 0;
+	}
+	setFlag("ZF", Z);
+}
+
+var arithmeticFuncTable = [
+	function(vA, vB){	// SBC
+		var cv = (regs["FLAG"] & flagTypes["CF"]) ? 1 : 0;
+		var retv = vA - vB - cv;
+		retv = getAdjustedResult(retv);
+		updateFLAG(vA, vB, retv);
+		return retv;
+	},
+	function(vA, vB){	// ADC
+		var cv = (regs["FLAG"] & flagTypes["CF"]) ? 1 : 0;
+		var retv = vA + vB + cv;
+		retv = getAdjustedResult(retv);
+		updateFLAG(vA, vB, retv);
+		return retv;
+	},
+	function(vA, vB){	// SUB
+		var retv = vA - vB;
+		retv = getAdjustedResult(retv);
+		updateFLAG(vA, vB, retv, -1);
+		return retv;
+	},
+	function(vA, vB){	// ADD
+		var retv = vA + vB;
+		retv = getAdjustedResult(retv);
+		updateFLAG(vA, vB, retv, -1);
+		return retv;
+	},
+	function(vA, vB){	// EOR
+		var retv = vA ^ vB;
+		retv = getAdjustedResult(retv);
+		updateFLAG(vA, vB, retv, -1, 0);
+		return retv;
+	},
+	function(vA, vB){	// OR
+		var retv = vA | vB;
+		retv = getAdjustedResult(retv);
+		updateFLAG(vA, vB, retv, -1, 0);
+		return retv;
+	},
+	function(vA, vB){	// AND
+		var retv = vA & vB;
+		retv = getAdjustedResult(retv);
+		updateFLAG(vA, vB, retv, -1, 0);
+		return retv;
+	},
+	function(vA, vB){	// CMP
+		var retv = vA - vB;
+		retv = getAdjustedResult(retv);
+		updateFLAG(vA, vB, retv, -1);
+		return retv;
+	},
+]
+
+function performArithmeticOp(op)
+{
+	var vA = regs[addrTypes[op.A]];
+	var vB, vR;
+	if(isBReg(op.B)){
+		vB = regs[addrTypes[op.B]];
+		//console.log(subops[op.subOp] + " " + addrTypes[op.A] + ", " + addrTypes[op.B]);
+	} else{
+		vB = fetchAtMAR();
+/*
+		if(isBImm(op.B)){
+			//console.log(subops[op.subOp] + " " + addrTypes[op.A] + ", " + vB.toString(16).toUpperCase());
+		} else{
+			if(MARTarget == codeMemory){
+				console.log(subops[op.subOp] + " " + addrTypes[op.A] +
+					", codeMem[0x" + vB.toString(16).toUpperCase() + "]");
+			} else{
+				console.log(subops[op.subOp] + " " + addrTypes[op.A] + 
+					", dataMem(0x" + vB.toString(16).toUpperCase() + ")");
+			}
+		}
+*/
+	}
+	vR = arithmeticFuncTable[op.subOp](vA, vB);
+	if(subops[op.subOp] !== "CMP"){
+		regs[addrTypes[op.A]] = vR;
+	}
+	//console.log(": " + subops[op.subOp] + " " + vA + ", " + vB + " = " + vR);
 }
 
 function getInstrGroupName(instr)
@@ -400,6 +592,38 @@ function getInstrGroupName(instr)
 	return "Aop";
 }
 
+var intervalID = null;
+var breakFlag = false;
+function runCPU()
+{
+	if(intervalID){
+		breakFlag = true;
+	} else{
+		intervalID = window.setInterval(
+			function(){
+				for(var i = 0; i < 100; i++){
+					nextInstr();
+					if(hltFlag || breakFlag){
+						window.clearInterval(intervalID);
+						intervalID = null;
+						breakFlag = false;
+						break;
+					}
+				}
+				updateView();
+			}
+		,1)
+	}
+}
+
+function nextInstr()
+{
+	for(;;){
+		nextPhase();
+		if(hltFlag || regs["NextPhase"] == 0) break;		
+	}	
+}
+
 function nextPhase()
 {
 	var instr = regs["IR"];
@@ -420,11 +644,10 @@ function nextPhase()
 				"sm": (instr & 0x03),
 				"cc": (instr & 0x0F),
 			});
-		} else{
+		}/* else{
 			console.log("Not implemented." + instr);
-		}
+		}*/
 	}
-	updateView();
 }
 // http://www.html5rocks.com/ja/tutorials/file/dndfiles/
 function handleFileSelect(evt){
@@ -439,9 +662,9 @@ function handleFileSelect(evt){
 		var r = new FileReader();
 		r.onload = (function(file){
 			return function(e){
-				console.log(r.result);
+				//console.log(r.result);
 				var s = r.result.replace(/#.*?\n/g, "").replace(/( |\n)/g, "");
-				console.log(s);
+				//console.log(s);
 				for(i = 0; i < s.length; i += 2){
 					codeMemory[i / 2] = parseInt(s.substr(i, 2), 16);
 				}
@@ -463,9 +686,9 @@ function handleDragOver(evt){
 <div class="container">
 	<h2>KUE-CHIP2 Emulator</h2>
 	<div class="btn-group" role="group" aria-label="controls">
-		<button type="button" class="btn btn-default" onclick="nextPhase()">Single Phase</button>
-		<button type="button" class="btn btn-default">Single Instruction</button>
-		<button type="button" class="btn btn-default">Start/Stop</button>
+		<button type="button" class="btn btn-default" onclick="nextPhase(); updateView();">Single Phase</button>
+		<button type="button" class="btn btn-default" onclick="nextInstr(); updateView();">Single Instruction</button>
+		<button type="button" class="btn btn-default" onclick="runCPU()">Start/Stop</button>
 		<button type="button" class="btn btn-default" onclick="resetCPU()">Reset</button>
 	</div>
 	<div class="row">
