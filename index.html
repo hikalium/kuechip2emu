@@ -87,12 +87,14 @@ function initView(){
 	t.append(tb);
 	$("#regtable").append(t);
 
-	initMemTable(dataMemSels, "#datamemtable", dataMemChanged)
+	initMemTable(dataMemSels, "#datamemtable", dataMemChanged, 0x100)
 	initMemTable(codeMemSels, "#codememtable", codeMemChanged)
 }
 
-function initMemTable(selList, tabelId, callback)
+function initMemTable(selList, tabelId, callback, addrOfs)
 {
+	if(addrOfs === undefined) addrOfs = 0;
+	addrOfs >>= 4;
 	var t = $('<table>').addClass("table").addClass("table-bordered");
 	var tr = $('<tr>').append($('<th>').text("Addr/Ofs"));
 	for(var i = 0; i < 16; i++){
@@ -101,7 +103,8 @@ function initMemTable(selList, tabelId, callback)
 	t.append($('<thead>').append(tr));
 	var tb = $('<tbody>');
 	for(var i = 0; i < 16; i++){
-		var tr = $('<tr>').append($('<th>').text((i.toString(16) + "0").toUpperCase()));
+		
+		var tr = $('<tr>').append($('<th>').text(((addrOfs + i).toString(16) + "0").toUpperCase()));
 		for(var k = 0; k < 16; k++){
 			var d = $('<input>')
 				.attr("type", "text")
@@ -145,6 +148,14 @@ function resetCPU()
 		regs[k] = 0;
 	}
 	hltFlag = false;
+	updateView();
+}
+
+function clearData()
+{
+	for(var i = 0; i < 0x100; i++){
+		dataMemory[i] = 0;
+	}
 	updateView();
 }
 
@@ -233,6 +244,7 @@ var dispatchTable = {
 		function(){
 			regs["NextPhase"] = 0;
 			console.log("HLT");
+			hltFlag = true;
 		}
 	],
 	"NOP": [
@@ -313,7 +325,7 @@ var dispatchTable = {
 					if(zf) break;
 					return;
 				case 0x0a: // Negative
-					if(n) break;
+					if(nf) break;
 					return;
 				case 0x0b: // Zero or Negative
 					if((nf | zf) == 1) break;
@@ -454,82 +466,77 @@ function getAdjustedResult(v)
 	return v;
 }
 
-function updateFLAG(vA, vB, vR, C, V, N, Z)
+function calcOp(vA, vB, opFunc, flgTable)
 {
-	// Flg: undefined -> update, -1 -> do not change, 1 or 0 -> set this value.
-	// vR should be adjusted.
-	if(C === undefined){
-		C = (vR & 0xff) ? 1 : 0;
-	}
-	setFlag("CF", C);
+	var vR = opFunc(vA, vB);
+	var rA = (vA & 0x80) ? -((vA ^ 0xff) + 1) : vA;
+	var rB = (vB & 0x80) ? -((vB ^ 0xff) + 1) : vB;
+	var rR = opFunc(rA, rB);
 	//
-	if(V === undefined){
-		V = ((vA & 0x80) == (vB & 0x80) && (vA & 0x80) != (vR & 0x80)) ? 1 : 0;
-	}
-	setFlag("VF", V);
+	var CF = flgTable[0];
+	var VF = flgTable[1];
+	var NF = flgTable[2];
+	var ZF = flgTable[3];
 	//
-	if(N === undefined){
-		N = (vR & 0x80) ? 1 : 0;
-	}
-	setFlag("NF", N);
+	if(CF === undefined)	CF = (vR & (~0xff)) != 0 ? 1 : 0;
+	setFlag("CF", CF);
 	//
-	if(Z === undefined){
-		Z = (vR == 0) ? 1 : 0;
-	}
-	setFlag("ZF", Z);
+	if(VF === undefined)	VF = (rR < -128 || 127 < rR) ? 1 : 0;
+	setFlag("VF", VF);
+	//
+	vR = getAdjustedResult(rR);
+	//
+	if(NF === undefined)	NF = (vR & 0x80) != 0 ? 1 : 0;
+	setFlag("NF", NF);
+	//
+	if(ZF === undefined)	ZF = (vR == 0) ? 1 : 0;
+	setFlag("ZF", ZF);
+	//
+	//console.log([CF, VF, NF, ZF]);
+	return vR;
 }
 
-var arithmeticFuncTable = [
-	function(vA, vB){	// SBC
-		var cv = (regs["FLAG"] & flagTypes["CF"]) ? 1 : 0;
-		var retv = vA - vB - cv;
-		retv = getAdjustedResult(retv);
-		updateFLAG(vA, vB, retv);
-		return retv;
-	},
-	function(vA, vB){	// ADC
-		var cv = (regs["FLAG"] & flagTypes["CF"]) ? 1 : 0;
-		var retv = vA + vB + cv;
-		retv = getAdjustedResult(retv);
-		updateFLAG(vA, vB, retv);
-		return retv;
-	},
-	function(vA, vB){	// SUB
-		var retv = vA - vB;
-		retv = getAdjustedResult(retv);
-		updateFLAG(vA, vB, retv, -1);
-		return retv;
-	},
-	function(vA, vB){	// ADD
-		var retv = vA + vB;
-		retv = getAdjustedResult(retv);
-		updateFLAG(vA, vB, retv, -1);
-		return retv;
-	},
-	function(vA, vB){	// EOR
-		var retv = vA ^ vB;
-		retv = getAdjustedResult(retv);
-		updateFLAG(vA, vB, retv, -1, 0);
-		return retv;
-	},
-	function(vA, vB){	// OR
-		var retv = vA | vB;
-		retv = getAdjustedResult(retv);
-		updateFLAG(vA, vB, retv, -1, 0);
-		return retv;
-	},
-	function(vA, vB){	// AND
-		var retv = vA & vB;
-		retv = getAdjustedResult(retv);
-		updateFLAG(vA, vB, retv, -1, 0);
-		return retv;
-	},
-	function(vA, vB){	// CMP
-		var retv = vA - vB;
-		retv = getAdjustedResult(retv);
-		updateFLAG(vA, vB, retv, -1);
-		return retv;
-	},
+var arithmeticTable = [
+	[
+		// SBC
+		function(a, b){ return a - b - ((regs["FLAG"] & flagTypes["CF"]) ? 1 : 0); },
+		[]
+	],
+	[
+		// ADC
+		function(a, b){ return a + b + ((regs["FLAG"] & flagTypes["CF"]) ? 1 : 0); },
+		[]
+	],
+	[
+		// SUB
+		function(a, b){ return a - b; },
+		[-1]
+	],
+	[
+		// ADD
+		function(a, b){ return a + b; },
+		[-1]
+	],
+	[
+		// EOR
+		function(a, b){ return a ^ b; },
+		[-1, 0]
+	],
+	[
+		// OR
+		function(a, b){ return a | b; },
+		[-1, 0]
+	],
+	[
+		// AND
+		function(a, b){ return a & b; },
+		[-1, 0]
+	],
+	[
+		// CMP
+		function(a, b){ return a - b; },
+		[-1]
+	],
 ]
 
 function performArithmeticOp(op)
@@ -538,24 +545,13 @@ function performArithmeticOp(op)
 	var vB, vR;
 	if(isBReg(op.B)){
 		vB = regs[addrTypes[op.B]];
-		//console.log(subops[op.subOp] + " " + addrTypes[op.A] + ", " + addrTypes[op.B]);
 	} else{
 		vB = fetchAtMAR();
-/*
-		if(isBImm(op.B)){
-			//console.log(subops[op.subOp] + " " + addrTypes[op.A] + ", " + vB.toString(16).toUpperCase());
-		} else{
-			if(MARTarget == codeMemory){
-				console.log(subops[op.subOp] + " " + addrTypes[op.A] +
-					", codeMem[0x" + vB.toString(16).toUpperCase() + "]");
-			} else{
-				console.log(subops[op.subOp] + " " + addrTypes[op.A] + 
-					", dataMem(0x" + vB.toString(16).toUpperCase() + ")");
-			}
-		}
-*/
 	}
-	vR = arithmeticFuncTable[op.subOp](vA, vB);
+	//
+	at = arithmeticTable[op.subOp];
+	vR = calcOp(vA, vB, at[0], at[1]);
+	//
 	if(subops[op.subOp] !== "CMP"){
 		regs[addrTypes[op.A]] = vR;
 	}
@@ -663,8 +659,8 @@ function handleFileSelect(evt){
 		r.onload = (function(file){
 			return function(e){
 				//console.log(r.result);
-				var s = r.result.replace(/#.*?\n/g, "").replace(/( |\n)/g, "");
-				//console.log(s);
+				var s = r.result.replace(/#.*?\n/g, "").replace(/(\s)/g, "");
+				console.log(s);
 				for(i = 0; i < s.length; i += 2){
 					codeMemory[i / 2] = parseInt(s.substr(i, 2), 16);
 				}
@@ -690,6 +686,7 @@ function handleDragOver(evt){
 		<button type="button" class="btn btn-default" onclick="nextInstr(); updateView();">Single Instruction</button>
 		<button type="button" class="btn btn-default" onclick="runCPU()">Start/Stop</button>
 		<button type="button" class="btn btn-default" onclick="resetCPU()">Reset</button>
+		<button type="button" class="btn btn-default" onclick="clearData()">Clear Data Memory</button>
 	</div>
 	<div class="row">
 		<div class="col-xs-12 col-sm-4 col-md-4 col-lg-4">
