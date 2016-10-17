@@ -252,7 +252,7 @@ var dispatchTable = {
 					if(!zf) break;
 					return;
 				case 0x02: // Zero or Positive
-					if(!n) break;
+					if(!nf) break;
 					return;
 				case 0x03: // Positive
 					if((nf | zf) == 0) break;
