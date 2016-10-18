@@ -1,5 +1,47 @@
 /// <reference path="lib/jquery.d.ts" />
+/*
+module KUEChip2
+{
+	export enum flagTypes
+	{
+		ZF: 0x01,
+		NF: 0x02,
+		VF: 0x04,
+		CF: 0x08
+	};
+}
 
+class KUEChip2 {
+	private readonly LSKEY_CodeMemory: string = "KUE-CHIP2_CodeMemory";
+	private readonly LSKEY_DataMemory: string = "KUE-CHIP2_DataMemory";
+	private readonly subops: string[] = [
+		"SBC", "ADC", "SUB", "ADD", "EOR", "OR", "AND", "CMP"
+	];
+	private readonly branchConds: string[] = [
+		"A", "NZ", "ZP", "P", "NI", "NC", "GE", "GT",
+		"VF", "Z", "N", "ZN", "NO", "C", "LT", "LE"
+	];
+	private readonly addrTypes: string[] = [
+		"ACC", "IX", "d", "[d]", "(d)", "[IX + d]", "(IX + d)"
+	];
+	enum flagTypes {
+		ZF: 0x01,
+		NF: 0x02,
+		VF: 0x04,
+		CF: 0x08,
+	};
+	//
+	private regs: {[index: string]: number; } = {
+		"ACC":		0,
+		"IX":		0,
+		"FLAG":		0,
+		"IR":		0,
+		"PC":		0,
+		"MAR":		0,
+		"NextPhase":0,
+	};
+}
+*/
 var LSKEY_CodeMemory = "KUE-CHIP2_CodeMemory";
 var LSKEY_DataMemory = "KUE-CHIP2_DataMemory"
 var regs = {"ACC": 0, "IX": 0, "FLAG": 0, "IR": 0, "PC": 0, "MAR": 0, "NextPhase": 0};
@@ -113,6 +155,14 @@ function clearData()
 	updateView();
 }
 
+function clearCode()
+{
+	for(var i = 0; i < 0x100; i++){
+		codeMemory[i] = 0;
+	}
+	updateView();
+}
+
 function initCPU()
 {
 	for(var k in regs){
@@ -155,6 +205,7 @@ function loadPCToMAR()
 	// (PC) -> MAR
 	regs["MAR"] = regs["PC"];
 	regs["PC"]++;
+	regs["PC"] &= 0xff;
 	MARTarget = codeMemory;
 }
 
@@ -297,26 +348,15 @@ var dispatchTable = {
 			//console.log("branch taken.");
 		},
 	],
-	"Ssm": [
+	"RSop": [
 		function(op){
-			var b0 = regs[addrTypes[op.A]] & 0x01;
-			var b7 = regs[addrTypes[op.A]] & 0x80;
-			//
+			regs[addrTypes[op.A]] = smTable[op.B][0](regs[addrTypes[op.A]]) & 0xFF;
 			regs["NextPhase"]++;
-
-			//
-			console.log("Ssm");
-			console.log("NOT IMPLEMENTED!!!!");
+			//console.log("Ssm");
 		},
 		function(op){
-			
-		}
-	],
-	"Rsm": [
-		function(){
+			smTable[op.B][0](regs[addrTypes[op.A]])
 			regs["NextPhase"] = 0;
-			console.log("Rsm");
-			console.log("NOT IMPLEMENTED!!!!");
 		}
 	],
 	"LD": [
@@ -495,51 +535,115 @@ var arithmeticTable = [
 		[-1]
 	],
 ];
-/*
-var smTable = [
+
+var smTable: ((v: number)=>any)[][] = [
 	[
 		// SRA
-		function(v){},
-		function(v){},
+		function(v: number): number
+		{
+			setFlag("CF", v & 0x01);
+			v = v >> 1;
+			return (v | (v & 0x40 << 1));
+		},
+		function(v){
+			setFlag("VF", 0);
+			setFlag("NF", ((v & 0x80) ? 1 : 0));
+			setFlag("ZF", (v == 0 ? 1 : 0));
+		},
 	],
 	[
 		// SLA
-		function(v){},
-		function(v){},
+		// V
+		function(v){
+			setFlag("CF", ((v & 0x80) ? 1 : 0));
+			return (v << 1);
+		},
+		function(v){
+			setFlag("VF", (((regs["FLAG"] & flagTypes["CF"]) ? 1 : 0) != ((v & 0x80) ? 1 : 0)) ? 1 : 0);
+			setFlag("NF", ((v & 0x80) ? 1 : 0));
+			setFlag("ZF", (v == 0 ? 1 : 0));
+		},
 	],
 	[
 		// SRL
-		function(v){},
-		function(v){},
+		function(v){
+			setFlag("CF", v & 0x01);
+			return (v >> 1);
+		},
+		function(v){
+			setFlag("VF", 0);
+			setFlag("NF", ((v & 0x80) ? 1 : 0));
+			setFlag("ZF", (v == 0 ? 1 : 0));
+		},
 	],
 	[
 		// SLL
-		function(v){},
-		function(v){},
+		function(v){
+			setFlag("CF", ((v & 0x80) ? 1 : 0));
+			return (v << 1);
+		},
+		function(v){
+			setFlag("VF", 0);
+			setFlag("NF", ((v & 0x80) ? 1 : 0));
+			setFlag("ZF", (v == 0 ? 1 : 0));
+		},
 	],
 	[
 		// RRA
-		function(v){},
-		function(v){},
+		function(v){
+			var b7 = (regs["FLAG"] & flagTypes["CF"]) ? 1 : 0;
+			setFlag("CF", v & 0x01);
+			return ((v >> 1) | (b7 * 0x80));
+		},
+		function(v){
+			setFlag("VF", 0);
+			setFlag("NF", ((v & 0x80) ? 1 : 0));
+			setFlag("ZF", (v == 0 ? 1 : 0));
+		},
 	],
 	[
 		// RLA
-		function(v){},
-		function(v){},
+		// V
+		function(v){
+			var b0 = (regs["FLAG"] & flagTypes["CF"]) ? 1 : 0;
+			setFlag("CF", ((v & 0x80) ? 1 : 0));
+			return ((v << 1) | b0);
+		},
+		function(v){
+			setFlag("VF", (((regs["FLAG"] & flagTypes["CF"]) ? 1 : 0) != ((v & 0x80) ? 1 : 0)) ? 1 : 0);
+			setFlag("NF", ((v & 0x80) ? 1 : 0));
+			setFlag("ZF", (v == 0 ? 1 : 0));
+		},
 	],
 	[
 		// RRL
-		function(v){},
-		function(v){},
+		function(v){
+			var b0 = v & 0x01;
+			setFlag("CF", b0);
+			return ((v >> 1) | (b0 << 7));
+		},
+		function(v){
+			setFlag("VF", 0);
+			setFlag("NF", ((v & 0x80) ? 1 : 0));
+			setFlag("ZF", (v == 0 ? 1 : 0));
+		},
 	],
 	[
 		// RLL
-		function(v){},
-		function(v){},
+		function(v){
+			var b7 = (v & 0x80) ? 1 : 0;
+			setFlag("CF", b7);
+			return ((v << 1) | b7);
+		},
+		function(v){
+			setFlag("VF", 0);
+			setFlag("NF", ((v & 0x80) ? 1 : 0));
+			setFlag("ZF", (v == 0 ? 1 : 0));
+		},
 	],
 	
 ]
-*/
+
 function performArithmeticOp(op)
 {
 	var vA = regs[addrTypes[op.A]];
@@ -577,10 +681,8 @@ function getInstrGroupName(instr)
 		return "SCF";
 	} else if((instr & 0xf0) == 0x30){
 		return "Bcc";
-	} else if((instr & 0xf4) == 0x40){
-		return "Ssm";
-	} else if((instr & 0xf4) == 0x44){
-		return "Rsm";
+	} else if((instr & 0xf0) == 0x40){
+		return "RSop";
 	} else if((instr & 0xf0) == 0x60){
 		return "LD";
 	} else if((instr & 0xf0) == 0x70){
