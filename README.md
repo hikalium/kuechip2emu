@@ -1,6 +1,7 @@
 kuechip2emu
 ====
-教育用マイコン[KUE-CHIP2](http://www.metsa.astem.or.jp/kue2/kue-chip2/)の動作をエミュレートする、HTML5アプリケーションです。
+- 教育用マイコン[KUE-CHIP2](http://www.metsa.astem.or.jp/kue2/kue-chip2/)の動作をエミュレートする、HTML5アプリケーションです。
+- This project has been moved to [OpenWaseda/kemuide](https://github.com/OpenWaseda/kemuide)
 
 ## Usage
 
