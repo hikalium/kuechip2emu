@@ -33,8 +33,7 @@ kuechip2emu
 
 ## Licence
 
-[MIT Licence](https://github.com/tcnksm/tool/blob/master/LICENCE)
-
+MIT Licence
 ## Author
 
 [hikalium](https://github.com/hikalium)
